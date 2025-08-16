@@ -1,0 +1,87 @@
+name: Build & Deploy to Azure Container App
+
+permissions:
+  id-token: write
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Java
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Build Spring Boot app
+      run: ./mvnw clean package -DskipTests
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Build and push Docker image
+      run: |
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/my-springboot-app:latest .
+        docker push ${{ secrets.DOCKER_USERNAME }}/my-springboot-app:latest
+
+  deploy-to-azure:
+    needs: build-and-deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set deployment variables
+        run: |
+          echo "RESOURCE_GROUP=my-first-rg" >> $GITHUB_ENV
+          echo "CONTAINERAPP_ENV=my-container-env" >> $GITHUB_ENV
+          echo "APP_NAME=my-container-app-spring" >> $GITHUB_ENV
+          echo "LOCATION=eastus" >> $GITHUB_ENV
+          echo "IMAGE=${{ secrets.DOCKER_USERNAME }}/my-springboot-app:latest" >> $GITHUB_ENV
+
+      - name: Create Container App Environment if not exists
+        run: |
+          az containerapp env show \
+            --name $CONTAINERAPP_ENV \
+            --resource-group $RESOURCE_GROUP \
+          || az containerapp env create \
+            --name $CONTAINERAPP_ENV \
+            --resource-group $RESOURCE_GROUP \
+            --location $LOCATION
+
+      - name: Deploy or Update Container App
+        run: |
+          az containerapp show \
+            --name $APP_NAME \
+            --resource-group $RESOURCE_GROUP \
+          && az containerapp update \
+            --name $APP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --image $IMAGE \
+          || az containerapp create \
+            --name $APP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --environment $CONTAINERAPP_ENV \
+            --image $IMAGE \
+            --target-port 8081 \
+            --ingress external \
+            --min-replicas 0 \
+            --max-replicas 1
