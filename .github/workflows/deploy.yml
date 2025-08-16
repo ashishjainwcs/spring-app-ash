@@ -23,6 +23,9 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
+    - name: Make mvnw executable
+      run: chmod +x ./mvnw
+
     - name: Build Spring Boot app
       run: ./mvnw clean package -DskipTests
 
